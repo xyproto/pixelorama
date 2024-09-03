@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mode 13h-like Drawing Program</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: black;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            image-rendering: pixelated; /* Ensures crisp, sharp pixels */
+            image-rendering: crisp-edges;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-optimize-contrast;
+            cursor: crosshair;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="display"></canvas>
+    <script>
+        const canvas = document.getElementById('display');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        const width = 320;
+        const height = 200;
+        let drawing = false;
+        let eventBuffer = [];
+
+        function logMessage(message) {
+            console.log(message);
+        }
+
+        function addMouseEvent(type, x, y) {
+            const event = {
+                t: type, // Minimized key for event type
+                x: Math.floor(x * width / canvas.clientWidth),
+                y: Math.floor(y * height / canvas.clientHeight)
+            };
+            eventBuffer.push(event);
+        }
+
+        function onMouseDown(e) {
+            drawing = true;
+            addMouseEvent('d', e.offsetX, e.offsetY); // 'd' for down
+        }
+
+        function onMouseMove(e) {
+            if (drawing) {
+                addMouseEvent('m', e.offsetX, e.offsetY); // 'm' for move
+            }
+        }
+
+        function onMouseUp(e) {
+            drawing = false;
+            addMouseEvent('u', e.offsetX, e.offsetY); // 'u' for up
+        }
+
+        canvas.addEventListener('mousedown', onMouseDown);
+        canvas.addEventListener('mousemove', onMouseMove);
+        canvas.addEventListener('mouseup', onMouseUp);
+        canvas.addEventListener('mouseleave', () => drawing = false);
+
+        async function sendEventBuffer() {
+            if (eventBuffer.length === 0) return;
+
+            const eventsToSend = eventBuffer.slice(); // Copy the buffer
+            eventBuffer = []; // Clear the buffer
+
+            try {
+                await fetch('/mouse_events', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(eventsToSend)
+                });
+            } catch (error) {
+                logMessage('Error sending mouse events: ' + error);
+            }
+        }
+
+        // Send buffered events every 50 milliseconds
+        setInterval(sendEventBuffer, 50);
+
+        async function fetchPixels2D() {
+            logMessage('Fetching pixels');
+            try {
+                const response = await fetch('/pixels');
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const img = new Image();
+                img.src = url;
+                img.onload = () => {
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    URL.revokeObjectURL(url);
+                };
+            } catch (error) {
+                logMessage('Error fetching pixels: ' + error);
+            }
+        }
+
+        // Set up SSE connection to listen for updates
+        const eventSource = new EventSource('/events');
+        eventSource.onmessage = function(event) {
+            if (event.data === 'update') {
+                fetchPixels2D();
+            }
+        };
+
+        eventSource.onerror = function(event) {
+            logMessage('Error with SSE: ' + event);
+        };
+
+        // Initial fetch to populate the canvas
+        fetchPixels2D();
+    </script>
+</body>
+</html>
